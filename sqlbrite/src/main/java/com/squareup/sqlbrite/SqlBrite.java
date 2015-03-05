@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import rx.Observable;
 import rx.functions.Func1;
 import rx.subjects.PublishSubject;
@@ -74,7 +75,7 @@ public final class SqlBrite implements Closeable {
   private final SQLiteOpenHelper helper;
   private final ThreadLocal<Transaction> transactions = new ThreadLocal<>();
   /** Publishes sets of tables which have changed. */
-  private final PublishSubject<Set<String>> trigger = PublishSubject.create();
+  private final PublishSubject<Set<String>> triggers = PublishSubject.create();
 
   // Read and write guarded by 'databaseLock'. Lazily initialized. Use methods to access.
   private volatile SQLiteDatabase readableDatabase;
@@ -149,7 +150,7 @@ public final class SqlBrite implements Closeable {
       transaction.triggers.addAll(tables);
     } else {
       if (logging) log("TRIGGER %s", tables);
-      trigger.onNext(tables);
+      triggers.onNext(tables);
     }
   }
 
@@ -305,7 +306,7 @@ public final class SqlBrite implements Closeable {
       }
     };
 
-    return trigger //
+    return triggers //
         .filter(tableFilter) // Only trigger on tables we care about.
         .startWith(INITIAL_TRIGGER) // Immediately execute the query for initial value.
         .map(new Func1<Set<String>, Query>() {
@@ -429,6 +430,37 @@ public final class SqlBrite implements Closeable {
     return rows;
   }
 
+  /**
+   * Temporarily end the transaction to let other threads run. The transaction is assumed to be
+   * successful so far. Do not call setTransactionSuccessful before calling this. When this
+   * returns a new transaction will have been created but not marked as successful. This assumes
+   * that there are no nested transactions (beginTransaction has only been called once) and will
+   * throw an exception if that is not the case.
+   * @return true if the transaction was yielded
+   *
+   * @see SQLiteDatabase#yieldIfContendedSafely()
+   */
+  public boolean yieldIfContendedSafely() {
+    return getWriteableDatabase().yieldIfContendedSafely();
+  }
+
+  /**
+   * Temporarily end the transaction to let other threads run. The transaction is assumed to be
+   * successful so far. Do not call setTransactionSuccessful before calling this. When this
+   * returns a new transaction will have been created but not marked as successful. This assumes
+   * that there are no nested transactions (beginTransaction has only been called once) and will
+   * throw an exception if that is not the case.
+   * @param sleepAmount if > 0, sleep this long before starting a new transaction if
+   *   the lock was actually yielded. This will allow other background threads to make some
+   *   more progress than they would if we started the transaction immediately.
+   * @return true if the transaction was yielded
+   *
+   * @see SQLiteDatabase#yieldIfContendedSafely(long)
+   */
+  public boolean yieldIfContendedSafely(long sleepAmount, TimeUnit sleepUnit) {
+    return getWriteableDatabase().yieldIfContendedSafely(sleepUnit.toMillis(sleepAmount));
+  }
+
   @IntDef({
       CONFLICT_ABORT,
       CONFLICT_FAIL,
@@ -484,7 +516,7 @@ public final class SqlBrite implements Closeable {
     }
 
     @Override public String toString() {
-      String name = String.format("%08x", System.identityHashCode(this)).replace(' ', '0');
+      String name = String.format("%08x", System.identityHashCode(this));
       return parent == null ? name : name + " [" + parent.toString() + ']';
     }
   }

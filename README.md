@@ -29,9 +29,9 @@ users.subscribe(new Action1<Query>() {
 });
 ```
 
-Unlike a traditional `rawQuery`, as long as you remain subscribed to the observable updates to the
-specified table(s) will trigger another query. This means that when you insert, update, or delete
-data any subscribed queries will update instantly.
+Unlike a traditional `rawQuery`, updates to the specified table(s) will trigger additional
+notifications for as long as you remain subscribed to the observable. This means that when you
+insert, update, or delete data, any subscribed queries will update with the new data instantly.
 
 ```java
 final AtomicInteger queries = new AtomicInteger();
@@ -129,7 +129,7 @@ Download
 --------
 
 ```groovy
-compile 'com.squareup.sqlbrite:sqlbrite:0.1.0-SNAPSHOT'
+compile 'com.squareup.sqlbrite:sqlbrite:0.1.0'
 ```
 
 Snapshots of the development version are available in [Sonatype's `snapshots` repository][snap].
