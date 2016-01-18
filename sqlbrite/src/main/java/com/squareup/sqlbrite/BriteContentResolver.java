@@ -21,11 +21,12 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.annotation.CheckResult;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.util.Log;
 import java.util.Arrays;
 import rx.Observable;
+import rx.Observable.OnSubscribe;
 import rx.Subscriber;
 import rx.functions.Action0;
 import rx.subscriptions.Subscriptions;
@@ -35,48 +36,24 @@ import static com.squareup.sqlbrite.SqlBrite.Query;
 
 /**
  * A lightweight wrapper around {@link ContentResolver} which allows for continuously observing
- * the result of a query.
+ * the result of a query. Create using a {@link SqlBrite} instance.
  */
-public final class SqlBriteContentProvider {
-  public static SqlBriteContentProvider create(@NonNull ContentResolver contentResolver) {
-    return new SqlBriteContentProvider(contentResolver);
-  }
+public final class BriteContentResolver {
+  final Handler contentObserverHandler = new Handler(Looper.getMainLooper());
 
-  private final Handler contentObserverHandler = new Handler(Looper.getMainLooper());
-  private final ContentResolver contentResolver;
+  final ContentResolver contentResolver;
+  private final Logger logger;
 
-  // Not volatile because we don't care if threads don't immediately see changes to this value.
-  private boolean logging;
-  private volatile Logger logger;
+  volatile boolean logging;
 
-  private SqlBriteContentProvider(ContentResolver contentResolver) {
+  BriteContentResolver(@NonNull ContentResolver contentResolver, @NonNull Logger logger) {
     this.contentResolver = contentResolver;
-  }
-
-  /**
-   * Control whether debug logging is enabled.
-   * <p>
-   * By default this method will log verbose message to {@linkplain Log Android's log}. Use a
-   * custom logger by calling {@link #setLogger}.
-   */
-  public void setLoggingEnabled(boolean enabled) {
-    if (enabled && logger == null) {
-      logger = new Logger() {
-        @Override public void log(String message) {
-          Log.v("SqlBrite", message);
-        }
-      };
-    }
-    logging = enabled;
-  }
-
-  /**
-   * Specify a custom logger for debug messages when {@linkplain #setLoggingEnabled(boolean)
-   * logging is enabled}.
-   */
-  public void setLogger(Logger logger) {
-    if (logger == null) throw new NullPointerException("logger == null");
     this.logger = logger;
+  }
+
+  /** Control whether debug logging is enabled. */
+  public void setLoggingEnabled(boolean enabled) {
+    logging = enabled;
   }
 
   /**
@@ -88,13 +65,17 @@ public final class SqlBriteContentProvider {
    * notifications for when the supplied {@code uri}'s data changes. Unsubscribe when you no longer
    * want updates to a query.
    * <p>
+   * Note: To skip the immediate notification and only receive subsequent notifications when data
+   * has changed call {@code skip(1)} on the returned observable.
+   * <p>
    * <b>Warning:</b> this method does not perform the query! Only by subscribing to the returned
    * {@link Observable} will the operation occur.
    *
    * @see ContentResolver#query(Uri, String[], String, String[], String)
    * @see ContentResolver#registerContentObserver(Uri, boolean, ContentObserver)
    */
-  public Observable<Query> createQuery(@NonNull final Uri uri, @Nullable final String[] projection,
+  @CheckResult @NonNull
+  public QueryObservable createQuery(@NonNull final Uri uri, @Nullable final String[] projection,
       @Nullable final String selection, @Nullable final String[] selectionArgs, @Nullable
       final String sortOrder, final boolean notifyForDescendents) {
     final Query query = new Query() {
@@ -102,7 +83,7 @@ public final class SqlBriteContentProvider {
         return contentResolver.query(uri, projection, selection, selectionArgs, sortOrder);
       }
     };
-    return Observable.create(new Observable.OnSubscribe<Query>() {
+    OnSubscribe<Query> subscribe = new OnSubscribe<Query>() {
       @Override public void call(final Subscriber<? super Query> subscriber) {
         final ContentObserver observer = new ContentObserver(contentObserverHandler) {
           @Override public void onChange(boolean selfChange) {
@@ -122,10 +103,14 @@ public final class SqlBriteContentProvider {
           }
         }));
       }
-    }).startWith(query);
+    };
+    Observable<Query> queryObservable = Observable.create(subscribe) //
+        .startWith(query) //
+        .onBackpressureLatest();
+    return new QueryObservable(queryObservable);
   }
 
-  private void log(String message, Object... args) {
+  void log(String message, Object... args) {
     if (args.length > 0) message = String.format(message, args);
     logger.log(message);
   }

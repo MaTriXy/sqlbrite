@@ -1,21 +1,27 @@
 SQLBrite
 ========
 
-A lightweight wrapper around `SQLiteOpenHelper` which introduces reactive stream semantics to SQL
-operations.
+A lightweight wrapper around `SQLiteOpenHelper` and `ContentResolver` which introduces reactive
+stream semantics to queries.
 
 
 
 Usage
 -----
 
-Wrap a `SQLiteOpenHelper` instance with `SqlBrite`:
+Create a `SqlBrite` instance which is an adapter for the library functionality.
 
 ```java
-SqlBrite db = SqlBrite.create(helper);
+SqlBrite sqlBrite = SqlBrite.create();
 ```
 
-The `SqlBrite.createQuery` method is similar to `SQLiteOpenHelper.rawQuery` except it takes an
+Pass a `SQLiteOpenHelper` instance to create a `BriteDatabase`.
+
+```java
+BriteDatabase db = sqlBrite.wrapDatabaseHelper(openHelper);
+```
+
+The `BriteDatabase.createQuery` method is similar to `SQLiteDatabase.rawQuery` except it takes an
 additional parameter of table(s) on which to listen for changes. Subscribe to the returned
 `Observable<Query>` which will immediately notify with a `Query` to run.
 
@@ -49,8 +55,8 @@ db.insert("users", createUser("strong", "Alec Strong"));
 System.out.println("Queries: " + queries.get()); // Prints 4
 ```
 
-In the previous example we re-used the `SqlBrite` object "db" for inserts. All insert, update, or
-delete operations must go through this object in order to correctly notify subscribers.
+In the previous example we re-used the `BriteDatabase` object "db" for inserts. All insert, update,
+or delete operations must go through this object in order to correctly notify subscribers.
 
 Unsubscribe from the returned `Subscription` to stop getting updates.
 
@@ -83,18 +89,19 @@ users.subscribe(new Action1<Query>() {
 });
 System.out.println("Queries: " + queries.get()); // Prints 1
 
-db.beginTransaction();
+Transaction transaction = db.newTransaction();
 try {
   db.insert("users", createUser("jw", "Jake Wharton"));
   db.insert("users", createUser("mattp", "Matt Precious"));
   db.insert("users", createUser("strong", "Alec Strong"));
-  db.setTransactionSuccessful();
+  transaction.markSuccessful();
 } finally {
-  db.endTransaction();
+  transaction.end();
 }
 
 System.out.println("Queries: " + queries.get()); // Prints 2
 ```
+*Note: You can also use try-with-resources with a `Transaction` instance.*
 
 Since queries are just regular RxJava `Observable` objects, operators can also be used to
 control the frequency of notifications to subscribers.
@@ -105,6 +112,14 @@ users.debounce(500, MILLISECONDS).subscribe(new Action1<Query>() {
     // TODO...
   }
 });
+```
+
+The `SqlBrite` object can also wrap a `ContentResolver` for observing a query on another app's
+content provider.
+
+```java
+BriteContentResolver resolver = sqlBrite.wrapContentProvider(contentResolver);
+Observable<Query> query = resolver.createQuery(/*...*/);
 ```
 
 The full power of RxJava's operators are available for combining, filtering, and triggering any
@@ -129,7 +144,7 @@ Download
 --------
 
 ```groovy
-compile 'com.squareup.sqlbrite:sqlbrite:0.1.0'
+compile 'com.squareup.sqlbrite:sqlbrite:0.5.0'
 ```
 
 Snapshots of the development version are available in [Sonatype's `snapshots` repository][snap].
