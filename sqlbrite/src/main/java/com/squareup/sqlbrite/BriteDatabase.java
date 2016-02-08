@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import rx.Observable;
+import rx.functions.Action0;
 import rx.functions.Func1;
 import rx.subjects.PublishSubject;
 
@@ -42,15 +43,15 @@ import static android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_NONE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_ROLLBACK;
+import static java.lang.System.nanoTime;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 /**
  * A lightweight wrapper around {@link SQLiteOpenHelper} which allows for continuously observing
  * the result of a query. Create using a {@link SqlBrite} instance.
  */
 public final class BriteDatabase implements Closeable {
-  private static final Set<String> INITIAL_TRIGGER = Collections.singleton("<initial>");
-
   private final SQLiteOpenHelper helper;
   private final SqlBrite.Logger logger;
 
@@ -284,7 +285,17 @@ public final class BriteDatabase implements Closeable {
         if (transactions.get() != null) {
           throw new IllegalStateException("Cannot execute observable query in a transaction.");
         }
-        return getReadableDatabase().rawQuery(sql, args);
+
+        long startNanos = nanoTime();
+        Cursor cursor = getReadableDatabase().rawQuery(sql, args);
+        long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
+
+        if (logging) {
+          log("QUERY (%sms)\n  tables: %s\n  sql: %s\n  args: %s", tookMillis, tableFilter, sql,
+              Arrays.toString(args));
+        }
+
+        return cursor;
       }
 
       @Override public String toString() {
@@ -294,21 +305,21 @@ public final class BriteDatabase implements Closeable {
 
     Observable<Query> queryObservable = triggers //
         .filter(tableFilter) // Only trigger on tables we care about.
-        .startWith(INITIAL_TRIGGER) // Immediately execute the query for initial value.
         .map(new Func1<Set<String>, Query>() {
           @Override public Query call(Set<String> trigger) {
+            return query;
+          }
+        }) //
+        .startWith(query) // Immediately trigger the query for initial value.
+        .onBackpressureLatest() //
+        .doOnSubscribe(new Action0() {
+          @Override public void call() {
             if (transactions.get() != null) {
               throw new IllegalStateException(
                   "Cannot subscribe to observable query in a transaction.");
             }
-            if (logging) {
-              log("QUERY\n  trigger: %s\n  tables: %s\n  sql: %s\n  args: %s", trigger, tableFilter,
-                  sql, Arrays.toString(args));
-            }
-            return query;
           }
-        }) //
-        .onBackpressureLatest();
+        });
     return new QueryObservable(queryObservable);
   }
 
@@ -319,8 +330,15 @@ public final class BriteDatabase implements Closeable {
    */
   @CheckResult // TODO @WorkerThread
   public Cursor query(@NonNull String sql, @NonNull String... args) {
-    if (logging) log("QUERY\n  sql: %s\n  args: %s", sql, Arrays.toString(args));
-    return getReadableDatabase().rawQuery(sql, args);
+    long startNanos = nanoTime();
+    Cursor cursor = getReadableDatabase().rawQuery(sql, args);
+    long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
+
+    if (logging) {
+      log("QUERY (%sms)\n  sql: %s\n  args: %s", tookMillis, sql, Arrays.toString(args));
+    }
+
+    return cursor;
   }
 
   /**
