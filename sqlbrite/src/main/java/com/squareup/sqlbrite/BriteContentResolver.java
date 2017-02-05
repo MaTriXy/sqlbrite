@@ -27,6 +27,8 @@ import android.support.annotation.Nullable;
 import java.util.Arrays;
 import rx.Observable;
 import rx.Observable.OnSubscribe;
+import rx.Observable.Transformer;
+import rx.Scheduler;
 import rx.Subscriber;
 import rx.functions.Action0;
 import rx.subscriptions.Subscriptions;
@@ -45,12 +47,17 @@ public final class BriteContentResolver {
 
   final ContentResolver contentResolver;
   private final Logger logger;
+  private final Scheduler scheduler;
+  private final Transformer<Query, Query> queryTransformer;
 
   volatile boolean logging;
 
-  BriteContentResolver(@NonNull ContentResolver contentResolver, @NonNull Logger logger) {
+  BriteContentResolver(ContentResolver contentResolver, Logger logger, Scheduler scheduler,
+      Transformer<Query, Query> queryTransformer) {
     this.contentResolver = contentResolver;
     this.logger = logger;
+    this.scheduler = scheduler;
+    this.queryTransformer = queryTransformer;
   }
 
   /** Control whether debug logging is enabled. */
@@ -66,6 +73,11 @@ public final class BriteContentResolver {
    * Subscribers will receive an immediate notification for initial data as well as subsequent
    * notifications for when the supplied {@code uri}'s data changes. Unsubscribe when you no longer
    * want updates to a query.
+   * <p>
+   * Since content resolver triggers are inherently asynchronous, items emitted from the returned
+   * observable use the {@link Scheduler} supplied to {@link SqlBrite#wrapContentProvider}. For
+   * consistency, the immediate notification sent on subscribe also uses this scheduler. As such,
+   * calling {@link Observable#subscribeOn subscribeOn} on the returned observable has no effect.
    * <p>
    * Note: To skip the immediate notification and only receive subsequent notifications when data
    * has changed call {@code skip(1)} on the returned observable.
@@ -84,9 +96,9 @@ public final class BriteContentResolver {
       @Override public Cursor run() {
         long startNanos = nanoTime();
         Cursor cursor = contentResolver.query(uri, projection, selection, selectionArgs, sortOrder);
-        long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
 
         if (logging) {
+          long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
           log("QUERY (%sms)\n  uri: %s\n  projection: %s\n  selection: %s\n  selectionArgs: %s\n  "
                   + "sortOrder: %s\n  notifyForDescendents: %s", tookMillis, uri,
               Arrays.toString(projection), selection, Arrays.toString(selectionArgs), sortOrder,
@@ -109,12 +121,21 @@ public final class BriteContentResolver {
             contentResolver.unregisterContentObserver(observer);
           }
         }));
+
+        subscriber.onNext(query); // Trigger initial query.
       }
     };
-    Observable<Query> queryObservable = Observable.create(subscribe) //
-        .startWith(query) //
-        .onBackpressureLatest();
-    return new QueryObservable(queryObservable);
+    final Observable<Query> queryObservable = Observable.create(subscribe) //
+        .onBackpressureLatest() // Guard against uncontrollable frequency of upstream emissions.
+        .observeOn(scheduler) //
+        .compose(queryTransformer) // Apply the user's query transformer.
+        .onBackpressureLatest(); // Guard against uncontrollable frequency of scheduler executions.
+    // TODO switch to .to() when non-@Experimental
+    return new QueryObservable(new OnSubscribe<Query>() {
+      @Override public void call(Subscriber<? super Query> subscriber) {
+        queryObservable.unsafeSubscribe(subscriber);
+      }
+    });
   }
 
   void log(String message, Object... args) {

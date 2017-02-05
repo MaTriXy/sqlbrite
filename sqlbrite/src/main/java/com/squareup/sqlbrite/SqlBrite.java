@@ -20,10 +20,14 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.support.annotation.CheckResult;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.support.annotation.WorkerThread;
 import android.util.Log;
 import java.util.List;
 import rx.Observable;
 import rx.Observable.Operator;
+import rx.Observable.Transformer;
+import rx.Scheduler;
 import rx.Subscriber;
 import rx.functions.Func1;
 
@@ -32,24 +36,60 @@ import rx.functions.Func1;
  * the result of a query.
  */
 public final class SqlBrite {
-  @CheckResult @NonNull
-  public static SqlBrite create() {
-    return create(new Logger() {
-      @Override public void log(String message) {
-        Log.d("SqlBrite", message);
-      }
-    });
+  static final Logger DEFAULT_LOGGER = new Logger() {
+    @Override public void log(String message) {
+      Log.d("SqlBrite", message);
+    }
+  };
+  static final Transformer<Query, Query> DEFAULT_TRANSFORMER = new Transformer<Query, Query>() {
+    @Override public Observable<Query> call(Observable<Query> queryObservable) {
+      return queryObservable;
+    }
+  };
+
+  public static final class Builder {
+    private Logger logger = DEFAULT_LOGGER;
+    private Transformer<Query, Query> queryTransformer = DEFAULT_TRANSFORMER;
+
+    @CheckResult
+    public Builder logger(@NonNull Logger logger) {
+      if (logger == null) throw new NullPointerException("logger == null");
+      this.logger = logger;
+      return this;
+    }
+
+    @CheckResult
+    public Builder queryTransformer(@NonNull Transformer<Query, Query> queryTransformer) {
+      if (queryTransformer == null) throw new NullPointerException("queryTransformer == null");
+      this.queryTransformer = queryTransformer;
+      return this;
+    }
+
+    @CheckResult
+    public SqlBrite build() {
+      return new SqlBrite(logger, queryTransformer);
+    }
   }
 
-  @CheckResult @NonNull
+  /** @deprecated Use {@link Builder} to create instances. */
+  @Deprecated @CheckResult @NonNull
+  public static SqlBrite create() {
+    return new SqlBrite(DEFAULT_LOGGER, DEFAULT_TRANSFORMER);
+  }
+
+  /** @deprecated Use {@link Builder} to create instances. */
+  @Deprecated @CheckResult @NonNull
   public static SqlBrite create(@NonNull Logger logger) {
-    return new SqlBrite(logger);
+    if (logger == null) throw new NullPointerException("logger == null");
+    return new SqlBrite(logger, DEFAULT_TRANSFORMER);
   }
 
   private final Logger logger;
+  private final Transformer<Query, Query> queryTransformer;
 
-  private SqlBrite(@NonNull Logger logger) {
+  SqlBrite(@NonNull Logger logger, @NonNull Transformer<Query, Query> queryTransformer) {
     this.logger = logger;
+    this.queryTransformer = queryTransformer;
   }
 
   /**
@@ -59,16 +99,24 @@ public final class SqlBrite {
    * interacting with the underlying {@link SQLiteOpenHelper} and it is required for automatic
    * notifications of table changes to work. See {@linkplain BriteDatabase#createQuery the
    * <code>query</code> method} for more information on that behavior.
+   *
+   * @param scheduler The {@link Scheduler} on which items from {@link BriteDatabase#createQuery}
+   * will be emitted.
    */
-  @CheckResult @NonNull
-  public BriteDatabase wrapDatabaseHelper(@NonNull SQLiteOpenHelper helper) {
-    return new BriteDatabase(helper, logger);
+  @CheckResult @NonNull public BriteDatabase wrapDatabaseHelper(@NonNull SQLiteOpenHelper helper,
+      @NonNull Scheduler scheduler) {
+    return new BriteDatabase(helper, logger, scheduler, queryTransformer);
   }
 
-  /** Wrap a {@link ContentResolver} for observable queries. */
-  @CheckResult @NonNull
-  public BriteContentResolver wrapContentProvider(@NonNull ContentResolver contentResolver) {
-    return new BriteContentResolver(contentResolver, logger);
+  /**
+   * Wrap a {@link ContentResolver} for observable queries.
+   *
+   * @param scheduler The {@link Scheduler} on which items from
+   * {@link BriteContentResolver#createQuery} will be emitted.
+   */
+  @CheckResult @NonNull public BriteContentResolver wrapContentProvider(
+      @NonNull ContentResolver contentResolver, @NonNull Scheduler scheduler) {
+    return new BriteContentResolver(contentResolver, logger, scheduler, queryTransformer);
   }
 
   /** An executable query. */
@@ -80,6 +128,8 @@ public final class SqlBrite {
      * It is an error for a query to pass through this operator with more than 1 row in its result
      * set. Use {@code LIMIT 1} on the underlying SQL query to prevent this. Result sets with 0 rows
      * do not emit an item.
+     * <p>
+     * This operator ignores {@code null} cursors returned from {@link #run()}.
      *
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      */
@@ -95,6 +145,8 @@ public final class SqlBrite {
      * It is an error for a query to pass through this operator with more than 1 row in its result
      * set. Use {@code LIMIT 1} on the underlying SQL query to prevent this. Result sets with 0 rows
      * emit {@code defaultValue}.
+     * <p>
+     * This operator emits {@code defaultValue} if {@code null} is returned from {@link #run()}.
      *
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      * @param defaultValue Value returned if result set is empty
@@ -112,6 +164,8 @@ public final class SqlBrite {
      * Be careful using this operator as it will always consume the entire cursor and create objects
      * for each row, every time this observable emits a new query. On tables whose queries update
      * frequently or very large result sets this can result in the creation of many objects.
+     * <p>
+     * This operator ignores {@code null} cursors returned from {@link #run()}.
      *
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      */
@@ -120,9 +174,17 @@ public final class SqlBrite {
       return new QueryToListOperator<>(mapper);
     }
 
-    /** Execute the query on the underlying database and return the resulting cursor. */
-    @CheckResult // TODO @WorkerThread
-    // TODO Implementations might return null, which is gross. Throw?
+    /**
+     * Execute the query on the underlying database and return the resulting cursor.
+     *
+     * @return A {@link Cursor} with query results, or {@code null} when the query could not be
+     * executed due to a problem with the underlying store. Unfortunately it is not well documented
+     * when {@code null} is returned. It usually involves a problem in communicating with the
+     * underlying store and should either be treated as failure or ignored for retry at a later
+     * time.
+     */
+    @CheckResult @WorkerThread
+    @Nullable
     public abstract Cursor run();
 
     /**
@@ -144,18 +206,22 @@ public final class SqlBrite {
      * <p>
      * Note: Limiting results or filtering will almost always be faster in the database as part of
      * a query and should be preferred, where possible.
+     * <p>
+     * The resulting observable will be empty if {@code null} is returned from {@link #run()}.
      */
     @CheckResult @NonNull
     public final <T> Observable<T> asRows(final Func1<Cursor, T> mapper) {
       return Observable.create(new Observable.OnSubscribe<T>() {
         @Override public void call(Subscriber<? super T> subscriber) {
           Cursor cursor = run();
-          try {
-            while (cursor.moveToNext() && !subscriber.isUnsubscribed()) {
-              subscriber.onNext(mapper.call(cursor));
+          if (cursor != null) {
+            try {
+              while (cursor.moveToNext() && !subscriber.isUnsubscribed()) {
+                subscriber.onNext(mapper.call(cursor));
+              }
+            } finally {
+              cursor.close();
             }
-          } finally {
-            cursor.close();
           }
           if (!subscriber.isUnsubscribed()) {
             subscriber.onCompleted();

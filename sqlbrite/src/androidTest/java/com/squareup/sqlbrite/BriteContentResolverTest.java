@@ -22,11 +22,16 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.test.ProviderTestCase2;
 import android.test.mock.MockContentProvider;
+import com.squareup.sqlbrite.SqlBrite.Query;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import rx.Observable;
+import rx.Observable.Transformer;
 import rx.Subscription;
+import rx.internal.util.RxRingBuffer;
+import rx.subjects.PublishSubject;
 import rx.subscriptions.Subscriptions;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -40,6 +45,8 @@ public final class BriteContentResolverTest
 
   private final List<String> logs = new ArrayList<>();
   private final RecordingObserver o = new BlockingRecordingObserver();
+  private final TestScheduler scheduler = new TestScheduler();
+  private final PublishSubject<Void> killSwitch = PublishSubject.create();
 
   private ContentResolver contentResolver;
   private BriteContentResolver db;
@@ -59,7 +66,12 @@ public final class BriteContentResolverTest
         logs.add(message);
       }
     };
-    db = new BriteContentResolver(contentResolver, logger);
+    Transformer<Query, Query> queryTransformer = new Transformer<Query, Query>() {
+      @Override public Observable<Query> call(Observable<Query> queryObservable) {
+        return queryObservable.takeUntil(killSwitch);
+      }
+    };
+    db = new BriteContentResolver(contentResolver, logger, scheduler, queryTransformer);
 
     getProvider().init(getContext().getContentResolver());
   }
@@ -123,7 +135,18 @@ public final class BriteContentResolverTest
     assertThat(logs).isEmpty();
   }
 
-  public void testBackpressureSupported() {
+  public void testQueryNotNotifiedWhenQueryTransformerUnsubscribes() {
+    subscription = db.createQuery(TABLE, null, null, null, null, false).subscribe(o);
+    o.assertCursor().isExhausted();
+
+    killSwitch.onNext(null);
+    o.assertIsCompleted();
+
+    contentResolver.insert(TABLE, values("key1", "val1"));
+    o.assertNoMoreEvents();
+  }
+
+  public void testBackpressureSupportedWhenConsumerSlow() {
     contentResolver.insert(TABLE, values("key1", "val1"));
     o.doRequest(2);
 
@@ -167,6 +190,42 @@ public final class BriteContentResolverTest
         .hasRow("key6", "val6")
         .isExhausted();
     o.assertNoMoreEvents();
+  }
+
+  public void testBackpressureSupportedWhenSchedulerSlow() {
+    subscription = db.createQuery(TABLE, null, null, null, null, false).subscribe(o);
+    o.assertCursor().isExhausted();
+
+    // Switch the scheduler to queue actions.
+    scheduler.runTasksImmediately(false);
+
+    // Shotgun twice as many insertions as the scheduler queue can handle.
+    for (int i = 0; i < RxRingBuffer.SIZE * 2; i++) {
+      contentResolver.insert(TABLE, values("key" + i, "val" + i));
+    }
+
+    scheduler.triggerActions();
+
+    // Assert we got all the events from the queue plus the one buffered from backpressure.
+    // Note: Because of the rebatching request behavior of observeOn, the initial emission is
+    // counted against this amount which is why there is no +1 on SIZE.
+    for (int i = 0; i < RxRingBuffer.SIZE; i++) {
+      o.assertCursor(); // Ignore contents, just assert we got notified.
+    }
+  }
+
+  public void testInitialValueAndTriggerUsesScheduler() {
+    scheduler.runTasksImmediately(false);
+
+    subscription = db.createQuery(TABLE, null, null, null, null, false).subscribe(o);
+    o.assertNoMoreEvents();
+    scheduler.triggerActions();
+    o.assertCursor().isExhausted();
+
+    contentResolver.insert(TABLE, values("key1", "val1"));
+    o.assertNoMoreEvents();
+    scheduler.triggerActions();
+    o.assertCursor().hasRow("key1", "val1").isExhausted();
   }
 
   private ContentValues values(String key, String value) {

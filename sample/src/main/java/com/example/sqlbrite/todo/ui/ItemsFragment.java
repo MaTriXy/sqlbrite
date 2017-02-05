@@ -28,8 +28,8 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListView;
+import butterknife.BindView;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
 import com.example.sqlbrite.todo.R;
 import com.example.sqlbrite.todo.TodoApp;
 import com.example.sqlbrite.todo.db.Db;
@@ -87,8 +87,8 @@ public final class ItemsFragment extends Fragment {
 
   @Inject BriteDatabase db;
 
-  @InjectView(android.R.id.list) ListView listView;
-  @InjectView(android.R.id.empty) View emptyView;
+  @BindView(android.R.id.list) ListView listView;
+  @BindView(android.R.id.empty) View emptyView;
 
   private Listener listener;
   private ItemsAdapter adapter;
@@ -104,7 +104,7 @@ public final class ItemsFragment extends Fragment {
     }
 
     super.onAttach(activity);
-    TodoApp.objectGraph(activity).inject(this);
+    TodoApp.getComponent(activity).inject(this);
     setHasOptionsMenu(true);
 
     listener = (Listener) activity;
@@ -132,7 +132,7 @@ public final class ItemsFragment extends Fragment {
   @Override
   public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
     super.onViewCreated(view, savedInstanceState);
-    ButterKnife.inject(this, view);
+    ButterKnife.bind(this, view);
     listView.setEmptyView(emptyView);
     listView.setAdapter(adapter);
 
@@ -187,7 +187,6 @@ public final class ItemsFragment extends Fragment {
             return listName + " (" + itemCount + ")";
           }
         })
-            .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
             .subscribe(new Action1<String>() {
               @Override public void call(String title) {
@@ -197,7 +196,6 @@ public final class ItemsFragment extends Fragment {
 
     subscriptions.add(db.createQuery(TodoItem.TABLE, LIST_QUERY, listId)
         .mapToList(TodoItem.MAPPER)
-        .subscribeOn(Schedulers.io())
         .observeOn(AndroidSchedulers.mainThread())
         .subscribe(adapter));
   }

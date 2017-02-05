@@ -1,12 +1,10 @@
 buildscript {
   dependencies {
     classpath rootProject.ext.androidPlugin
-    classpath 'com.neenbedankt.gradle.plugins:android-apt:1.7'
   }
 }
 
 apply plugin: 'com.android.application'
-apply plugin: 'com.neenbedankt.android-apt'
 apply from: rootProject.file('gradle/android-findbugs.gradle')
 
 dependencies {
@@ -14,18 +12,21 @@ dependencies {
   compile rootProject.ext.supportV4
   compile rootProject.ext.supportAnnotations
 
-  // Square dependencies.
+  // Dagger dependencies.
   compile rootProject.ext.dagger
-  apt rootProject.ext.daggerCompiler
+  annotationProcessor rootProject.ext.daggerCompiler
 
   // Third-party dependencies.
-  compile rootProject.ext.butterKnife
+  compile rootProject.ext.butterKnifeRuntime
+  annotationProcessor rootProject.ext.butterKnifeCompiler
   compile rootProject.ext.timber
   compile rootProject.ext.rxJava
   compile rootProject.ext.rxAndroid
   compile rootProject.ext.rxBinding
-  compile rootProject.ext.autoParcel
-  apt rootProject.ext.autoParcelProcessor
+
+  provided rootProject.ext.autoValue
+  annotationProcessor rootProject.ext.autoValue
+  annotationProcessor rootProject.ext.autoValueParcel
 
   provided rootProject.ext.findbugsJsr305
   provided rootProject.ext.findbugsAnnotations
@@ -49,6 +50,8 @@ android {
 
   lintOptions {
     textOutput 'stdout'
+    textReport true
+    ignore 'InvalidPackage' // Provided AutoValue pulls in Guava and friends. Doesn't end up in APK.
   }
 
   dexOptions {

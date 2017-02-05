@@ -27,8 +27,8 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListView;
+import butterknife.BindView;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
 import butterknife.OnItemClick;
 import com.example.sqlbrite.todo.R;
 import com.example.sqlbrite.todo.TodoApp;
@@ -36,7 +36,6 @@ import com.squareup.sqlbrite.BriteDatabase;
 import javax.inject.Inject;
 import rx.Subscription;
 import rx.android.schedulers.AndroidSchedulers;
-import rx.schedulers.Schedulers;
 
 import static android.support.v4.view.MenuItemCompat.SHOW_AS_ACTION_IF_ROOM;
 import static android.support.v4.view.MenuItemCompat.SHOW_AS_ACTION_WITH_TEXT;
@@ -53,8 +52,8 @@ public final class ListsFragment extends Fragment {
 
   @Inject BriteDatabase db;
 
-  @InjectView(android.R.id.list) ListView listView;
-  @InjectView(android.R.id.empty) View emptyView;
+  @BindView(android.R.id.list) ListView listView;
+  @BindView(android.R.id.empty) View emptyView;
 
   private Listener listener;
   private ListsAdapter adapter;
@@ -66,7 +65,7 @@ public final class ListsFragment extends Fragment {
     }
 
     super.onAttach(activity);
-    TodoApp.objectGraph(activity).inject(this);
+    TodoApp.getComponent(activity).inject(this);
     setHasOptionsMenu(true);
 
     listener = (Listener) activity;
@@ -94,7 +93,7 @@ public final class ListsFragment extends Fragment {
   @Override
   public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
     super.onViewCreated(view, savedInstanceState);
-    ButterKnife.inject(this, view);
+    ButterKnife.bind(this, view);
     listView.setEmptyView(emptyView);
     listView.setAdapter(adapter);
   }
@@ -110,7 +109,6 @@ public final class ListsFragment extends Fragment {
 
     subscription = db.createQuery(ListsItem.TABLES, ListsItem.QUERY)
         .mapToList(ListsItem.MAPPER)
-        .subscribeOn(Schedulers.io())
         .observeOn(AndroidSchedulers.mainThread())
         .subscribe(adapter);
   }

@@ -1,5 +1,85 @@
 Change Log
-=========
+==========
+
+Version 1.1.1 *(2016-12-20)*
+----------------------------
+
+ * Fix: Correct spelling of `getWritableDatabase()` to match `SQLiteOpenHelper`.
+
+
+Version 1.1.0 *(2016-12-16)*
+----------------------------
+
+ * New: Expose `getReadableDatabase()` and `getWriteableDatabase()` convenience methods.
+ * Fix: Do not cache instances of the readable and writable database internally as the framework
+   does this by default.
+
+
+Version 1.0.0 *(2016-12-02)*
+----------------------------
+
+ * RxJava dependency updated to 1.2.3.
+ * Restore `@WorkerThread` annotations to methods which do I/O. If you're using Java 8 with
+   Retrolambda or Jack you need to use version 2.3 or newer of the Android Gradle plugin to have
+   these annotations correctly handled by lint.
+
+
+Version 0.8.0 *(2016-10-21)*
+----------------------------
+
+ * New: A `Transformer<Query, Query>` can be supplied which is applied to each returned observable.
+ * New: `newNonExclusiveTransaction()` starts transactions in `IMMEDIATE` mode. See the platform
+   or SQLite documentation for more information.
+ * New: APIs for insert/update/delete which allow providing a compiled `SQLiteStatement`.
+
+
+Version 0.7.0 *(2016-07-06)*
+----------------------------
+
+ * New: Allow `mapTo*` mappers to return `null` values. This is useful when querying on a single,
+   nullable column for which `null` is a valid value.
+ * Fix: When `mapToOne` does not emit a value downstream, request another value from upstream to
+   ensure fixed-item requests (such as `take(1)`) as properly honored.
+ * Fix: Add logging to synchronous `execute` methods.
+
+
+Version 0.6.3 *(2016-04-13)*
+----------------------------
+
+ * `QueryObservable` constructor is now public allow instances to be created for tests.
+
+
+Version 0.6.2 *(2016-03-01)*
+----------------------------
+
+ * Fix: Document explicitly and correctly handle the fact that `Query.run()` can return `null` in
+   some situations. The `mapToOne`, `mapToOneOrDefault`, `mapToList`, and `asRows` helpers have all
+   been updated to handle this case and each is documented with their respective behavior.
+
+
+Version 0.6.1 *(2016-02-29)*
+----------------------------
+
+ * Fix: Apply backpressure strategy between database/content provider and the supplied `Scheduler`.
+   This guards against backpressure exceptions when the scheduler is unable to keep up with the rate
+   at which queries are being triggered.
+ * Fix: Indent the subsequent lines of a multi-line queries when logging.
+
+
+Version 0.6.0 *(2016-02-17)*
+----------------------------
+
+ * New: Require a `Scheduler` when wrapping a database or content provider which will be used when
+   sending query triggers. This allows the query to be run in subsequent operators without needing an
+   additional `observeOn`. It also eliminates the need to use `subscribeOn` since the supplied
+   `Scheduler` will be used for all emissions (similar to RxJava's `timer`, `interval`, etc.).
+
+   This also corrects a potential violation of the RxJava contract and potential source of bugs in that
+   all triggers will occur on the supplied `Scheduler`. Previously the initial value would trigger
+   synchronously (on the subscribing thread) while subsequent ones trigger on the thread which
+   performed the transaction. The new behavior puts the initial trigger on the same thread as all
+   subsequent triggers and also does not force transactions to block while sending triggers.
+
 
 Version 0.5.1 *(2016-02-03)*
 ----------------------------

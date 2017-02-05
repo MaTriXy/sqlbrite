@@ -12,14 +12,18 @@ Usage
 Create a `SqlBrite` instance which is an adapter for the library functionality.
 
 ```java
-SqlBrite sqlBrite = SqlBrite.create();
+SqlBrite sqlBrite = new SqlBrite.Builder().build();
 ```
 
-Pass a `SQLiteOpenHelper` instance to create a `BriteDatabase`.
+Pass a `SQLiteOpenHelper` instance and a `Scheduler` to create a `BriteDatabase`.
 
 ```java
-BriteDatabase db = sqlBrite.wrapDatabaseHelper(openHelper);
+BriteDatabase db = sqlBrite.wrapDatabaseHelper(openHelper, Schedulers.io());
 ```
+
+A `Scheduler` is required for a few reasons, but the most important is that query notifications can
+trigger on the thread of your choice. The query can then be run without blocking the main thread or
+the thread which caused the trigger.
 
 The `BriteDatabase.createQuery` method is similar to `SQLiteDatabase.rawQuery` except it takes an
 additional parameter of table(s) on which to listen for changes. Subscribe to the returned
@@ -118,7 +122,7 @@ The `SqlBrite` object can also wrap a `ContentResolver` for observing a query on
 content provider.
 
 ```java
-BriteContentResolver resolver = sqlBrite.wrapContentProvider(contentResolver);
+BriteContentResolver resolver = sqlBrite.wrapContentProvider(contentResolver, Schedulers.io());
 Observable<Query> query = resolver.createQuery(/*...*/);
 ```
 
@@ -136,7 +140,7 @@ of updates to tables such that you can update queries as soon as data changes.
 This library is not an ORM. It is not a type-safe query mechanism. It won't serialize the same POJOs
 you use for Gson. It's not going to perform database migrations for you.
 
-A day may come when some of those features are added, but it is not this day.
+Some of these features are offered by [SQLDelight][sqldelight] which can be used with SQLBrite.
 
 
 
@@ -144,7 +148,7 @@ Download
 --------
 
 ```groovy
-compile 'com.squareup.sqlbrite:sqlbrite:0.5.1'
+compile 'com.squareup.sqlbrite:sqlbrite:1.1.1'
 ```
 
 Snapshots of the development version are available in [Sonatype's `snapshots` repository][snap].
@@ -173,3 +177,4 @@ License
 
 
  [snap]: https://oss.sonatype.org/content/repositories/snapshots/
+ [sqldelight]: https://github.com/square/sqldelight/

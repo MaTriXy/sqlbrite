@@ -2,6 +2,7 @@ package com.squareup.sqlbrite;
 
 import android.database.Cursor;
 import android.database.MatrixCursor;
+import android.support.annotation.Nullable;
 import android.support.test.runner.AndroidJUnit4;
 import com.squareup.sqlbrite.SqlBrite.Query;
 import java.util.List;
@@ -9,14 +10,42 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import rx.functions.Func1;
+import rx.observers.TestSubscriber;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
 
 @RunWith(AndroidJUnit4.class)
+@SuppressWarnings("CheckResult")
 public final class SqlBriteTest {
   private static final String FIRST_NAME = "first_name";
   private static final String LAST_NAME = "last_name";
   private static final String[] COLUMN_NAMES = { FIRST_NAME, LAST_NAME };
+
+  @Test public void builderDisallowsNull() {
+    SqlBrite.Builder builder = new SqlBrite.Builder();
+    try {
+      builder.logger(null);
+      fail();
+    } catch (NullPointerException e) {
+      assertThat(e).hasMessage("logger == null");
+    }
+    try {
+      builder.queryTransformer(null);
+      fail();
+    } catch (NullPointerException e) {
+      assertThat(e).hasMessage("queryTransformer == null");
+    }
+  }
+
+  @Test public void createDisallowsNull() {
+    try {
+      SqlBrite.create(null);
+      fail();
+    } catch (NullPointerException e) {
+      assertThat(e).hasMessage("logger == null");
+    }
+  }
 
   @Test public void asRowsEmpty() {
     MatrixCursor cursor = new MatrixCursor(COLUMN_NAMES);
@@ -49,6 +78,28 @@ public final class SqlBriteTest {
       }
     }).take(1).toBlocking().first();
     assertThat(count.get()).isEqualTo(1);
+  }
+
+  @Test public void asRowsEmptyWhenNullCursor() {
+    Query nully = new Query() {
+      @Nullable @Override public Cursor run() {
+        return null;
+      }
+    };
+
+    TestSubscriber<Name> subscriber = new TestSubscriber<>();
+    final AtomicInteger count = new AtomicInteger();
+    nully.asRows(new Func1<Cursor, Name>() {
+      @Override public Name call(Cursor cursor) {
+        count.incrementAndGet();
+        return Name.MAP.call(cursor);
+      }
+    }).subscribe(subscriber);
+
+    subscriber.assertNoValues();
+    subscriber.assertCompleted();
+
+    assertThat(count.get()).isEqualTo(0);
   }
 
   static final class Name {
