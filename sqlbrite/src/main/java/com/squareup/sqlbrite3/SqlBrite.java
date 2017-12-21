@@ -13,27 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.squareup.sqlbrite;
+package com.squareup.sqlbrite3;
 
+import android.arch.persistence.db.SupportSQLiteOpenHelper;
 import android.content.ContentResolver;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteOpenHelper;
+import android.os.Build;
 import android.support.annotation.CheckResult;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RequiresApi;
 import android.support.annotation.WorkerThread;
 import android.util.Log;
+import io.reactivex.Observable;
+import io.reactivex.ObservableEmitter;
+import io.reactivex.ObservableOnSubscribe;
+import io.reactivex.ObservableOperator;
+import io.reactivex.ObservableTransformer;
+import io.reactivex.Scheduler;
+import io.reactivex.functions.Function;
 import java.util.List;
-import rx.Observable;
-import rx.Observable.Operator;
-import rx.Observable.Transformer;
-import rx.Scheduler;
-import rx.Subscriber;
-import rx.functions.Func1;
+import java.util.Optional;
 
 /**
- * A lightweight wrapper around {@link SQLiteOpenHelper} which allows for continuously observing
- * the result of a query.
+ * A lightweight wrapper around {@link SupportSQLiteOpenHelper} which allows for continuously
+ * observing the result of a query.
  */
 public final class SqlBrite {
   static final Logger DEFAULT_LOGGER = new Logger() {
@@ -41,15 +45,16 @@ public final class SqlBrite {
       Log.d("SqlBrite", message);
     }
   };
-  static final Transformer<Query, Query> DEFAULT_TRANSFORMER = new Transformer<Query, Query>() {
-    @Override public Observable<Query> call(Observable<Query> queryObservable) {
-      return queryObservable;
-    }
-  };
+  static final ObservableTransformer<Query, Query> DEFAULT_TRANSFORMER =
+      new ObservableTransformer<Query, Query>() {
+        @Override public Observable<Query> apply(Observable<Query> queryObservable) {
+          return queryObservable;
+        }
+      };
 
   public static final class Builder {
     private Logger logger = DEFAULT_LOGGER;
-    private Transformer<Query, Query> queryTransformer = DEFAULT_TRANSFORMER;
+    private ObservableTransformer<Query, Query> queryTransformer = DEFAULT_TRANSFORMER;
 
     @CheckResult
     public Builder logger(@NonNull Logger logger) {
@@ -59,7 +64,7 @@ public final class SqlBrite {
     }
 
     @CheckResult
-    public Builder queryTransformer(@NonNull Transformer<Query, Query> queryTransformer) {
+    public Builder queryTransformer(@NonNull ObservableTransformer<Query, Query> queryTransformer) {
       if (queryTransformer == null) throw new NullPointerException("queryTransformer == null");
       this.queryTransformer = queryTransformer;
       return this;
@@ -71,39 +76,27 @@ public final class SqlBrite {
     }
   }
 
-  /** @deprecated Use {@link Builder} to create instances. */
-  @Deprecated @CheckResult @NonNull
-  public static SqlBrite create() {
-    return new SqlBrite(DEFAULT_LOGGER, DEFAULT_TRANSFORMER);
-  }
+  final Logger logger;
+  final ObservableTransformer<Query, Query> queryTransformer;
 
-  /** @deprecated Use {@link Builder} to create instances. */
-  @Deprecated @CheckResult @NonNull
-  public static SqlBrite create(@NonNull Logger logger) {
-    if (logger == null) throw new NullPointerException("logger == null");
-    return new SqlBrite(logger, DEFAULT_TRANSFORMER);
-  }
-
-  private final Logger logger;
-  private final Transformer<Query, Query> queryTransformer;
-
-  SqlBrite(@NonNull Logger logger, @NonNull Transformer<Query, Query> queryTransformer) {
+  SqlBrite(@NonNull Logger logger, @NonNull ObservableTransformer<Query, Query> queryTransformer) {
     this.logger = logger;
     this.queryTransformer = queryTransformer;
   }
 
   /**
-   * Wrap a {@link SQLiteOpenHelper} for observable queries.
+   * Wrap a {@link SupportSQLiteOpenHelper} for observable queries.
    * <p>
    * While not strictly required, instances of this class assume that they will be the only ones
-   * interacting with the underlying {@link SQLiteOpenHelper} and it is required for automatic
-   * notifications of table changes to work. See {@linkplain BriteDatabase#createQuery the
+   * interacting with the underlying {@link SupportSQLiteOpenHelper} and it is required for
+   * automatic notifications of table changes to work. See {@linkplain BriteDatabase#createQuery the
    * <code>query</code> method} for more information on that behavior.
    *
    * @param scheduler The {@link Scheduler} on which items from {@link BriteDatabase#createQuery}
    * will be emitted.
    */
-  @CheckResult @NonNull public BriteDatabase wrapDatabaseHelper(@NonNull SQLiteOpenHelper helper,
+  @CheckResult @NonNull public BriteDatabase wrapDatabaseHelper(
+      @NonNull SupportSQLiteOpenHelper helper,
       @NonNull Scheduler scheduler) {
     return new BriteDatabase(helper, logger, scheduler, queryTransformer);
   }
@@ -122,8 +115,8 @@ public final class SqlBrite {
   /** An executable query. */
   public static abstract class Query {
     /**
-     * Creates an {@linkplain Operator observable operator} which transforms a query returning a
-     * single row to {@code T} using {@code mapper}.
+     * Creates an {@linkplain ObservableOperator operator} which transforms a query returning a
+     * single row to a {@code T} using {@code mapper}. Use with {@link Observable#lift}.
      * <p>
      * It is an error for a query to pass through this operator with more than 1 row in its result
      * set. Use {@code LIMIT 1} on the underlying SQL query to prevent this. Result sets with 0 rows
@@ -133,14 +126,14 @@ public final class SqlBrite {
      *
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      */
-    @CheckResult @NonNull
-    public static <T> Operator<T, Query> mapToOne(@NonNull Func1<Cursor, T> mapper) {
-      return new QueryToOneOperator<>(mapper, false, null);
+    @CheckResult @NonNull //
+    public static <T> ObservableOperator<T, Query> mapToOne(@NonNull Function<Cursor, T> mapper) {
+      return new QueryToOneOperator<>(mapper, null);
     }
 
     /**
-     * Creates an {@linkplain Operator observable operator} which transforms a query returning a
-     * single row to {@code T} using {@code mapper}.
+     * Creates an {@linkplain ObservableOperator operator} which transforms a query returning a
+     * single row to a {@code T} using {@code mapper}. Use with {@link Observable#lift}.
      * <p>
      * It is an error for a query to pass through this operator with more than 1 row in its result
      * set. Use {@code LIMIT 1} on the underlying SQL query to prevent this. Result sets with 0 rows
@@ -151,15 +144,36 @@ public final class SqlBrite {
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      * @param defaultValue Value returned if result set is empty
      */
+    @SuppressWarnings("ConstantConditions") // Public API contract.
     @CheckResult @NonNull
-    public static <T> Operator<T, Query> mapToOneOrDefault(@NonNull Func1<Cursor, T> mapper,
-        T defaultValue) {
-      return new QueryToOneOperator<>(mapper, true, defaultValue);
+    public static <T> ObservableOperator<T, Query> mapToOneOrDefault(
+        @NonNull Function<Cursor, T> mapper, @NonNull T defaultValue) {
+      if (defaultValue == null) throw new NullPointerException("defaultValue == null");
+      return new QueryToOneOperator<>(mapper, defaultValue);
     }
 
     /**
-     * Creates an {@linkplain Operator observable operator} which transforms a query to a
-     * {@code List<T>} using {@code mapper}.
+     * Creates an {@linkplain ObservableOperator operator} which transforms a query returning a
+     * single row to a {@code Optional<T>} using {@code mapper}. Use with {@link Observable#lift}.
+     * <p>
+     * It is an error for a query to pass through this operator with more than 1 row in its result
+     * set. Use {@code LIMIT 1} on the underlying SQL query to prevent this. Result sets with 0 rows
+     * emit {@link Optional#empty() Optional.empty()}.
+     * <p>
+     * This operator ignores {@code null} cursors returned from {@link #run()}.
+     *
+     * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
+     */
+    @RequiresApi(Build.VERSION_CODES.N) //
+    @CheckResult @NonNull //
+    public static <T> ObservableOperator<Optional<T>, Query> mapToOptional(
+        @NonNull Function<Cursor, T> mapper) {
+      return new QueryToOptionalOperator<>(mapper);
+    }
+
+    /**
+     * Creates an {@linkplain ObservableOperator operator} which transforms a query to a
+     * {@code List<T>} using {@code mapper}. Use with {@link Observable#lift}.
      * <p>
      * Be careful using this operator as it will always consume the entire cursor and create objects
      * for each row, every time this observable emits a new query. On tables whose queries update
@@ -170,7 +184,8 @@ public final class SqlBrite {
      * @param mapper Maps the current {@link Cursor} row to {@code T}. May not return null.
      */
     @CheckResult @NonNull
-    public static <T> Operator<List<T>, Query> mapToList(@NonNull Func1<Cursor, T> mapper) {
+    public static <T> ObservableOperator<List<T>, Query> mapToList(
+        @NonNull Function<Cursor, T> mapper) {
       return new QueryToListOperator<>(mapper);
     }
 
@@ -210,21 +225,21 @@ public final class SqlBrite {
      * The resulting observable will be empty if {@code null} is returned from {@link #run()}.
      */
     @CheckResult @NonNull
-    public final <T> Observable<T> asRows(final Func1<Cursor, T> mapper) {
-      return Observable.create(new Observable.OnSubscribe<T>() {
-        @Override public void call(Subscriber<? super T> subscriber) {
+    public final <T> Observable<T> asRows(final Function<Cursor, T> mapper) {
+      return Observable.create(new ObservableOnSubscribe<T>() {
+        @Override public void subscribe(ObservableEmitter<T> e) throws Exception {
           Cursor cursor = run();
           if (cursor != null) {
             try {
-              while (cursor.moveToNext() && !subscriber.isUnsubscribed()) {
-                subscriber.onNext(mapper.call(cursor));
+              while (cursor.moveToNext() && !e.isDisposed()) {
+                e.onNext(mapper.apply(cursor));
               }
             } finally {
               cursor.close();
             }
           }
-          if (!subscriber.isUnsubscribed()) {
-            subscriber.onCompleted();
+          if (!e.isDisposed()) {
+            e.onComplete();
           }
         }
       });

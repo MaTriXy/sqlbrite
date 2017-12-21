@@ -13,22 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.squareup.sqlbrite;
+package com.squareup.sqlbrite3;
 
+import android.arch.persistence.db.SimpleSQLiteQuery;
+import android.arch.persistence.db.SupportSQLiteDatabase;
+import android.arch.persistence.db.SupportSQLiteOpenHelper;
+import android.arch.persistence.db.SupportSQLiteOpenHelper.Callback;
+import android.arch.persistence.db.SupportSQLiteQuery;
+import android.arch.persistence.db.SupportSQLiteStatement;
 import android.content.ContentValues;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
-import android.database.sqlite.SQLiteStatement;
 import android.database.sqlite.SQLiteTransactionListener;
-import android.os.Build;
 import android.support.annotation.CheckResult;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.support.annotation.RequiresApi;
 import android.support.annotation.WorkerThread;
-import com.squareup.sqlbrite.SqlBrite.Query;
+import com.squareup.sqlbrite3.SqlBrite.Logger;
+import com.squareup.sqlbrite3.SqlBrite.Query;
+import io.reactivex.Observable;
+import io.reactivex.ObservableTransformer;
+import io.reactivex.Scheduler;
+import io.reactivex.functions.Consumer;
+import io.reactivex.functions.Function;
+import io.reactivex.functions.Predicate;
+import io.reactivex.subjects.PublishSubject;
+import io.reactivex.subjects.Subject;
 import java.io.Closeable;
 import java.lang.annotation.Retention;
 import java.util.Arrays;
@@ -36,13 +46,6 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import rx.Observable;
-import rx.Observable.Transformer;
-import rx.Scheduler;
-import rx.Subscriber;
-import rx.functions.Action0;
-import rx.functions.Func1;
-import rx.subjects.PublishSubject;
 
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_FAIL;
@@ -50,24 +53,22 @@ import static android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_NONE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE;
 import static android.database.sqlite.SQLiteDatabase.CONFLICT_ROLLBACK;
-import static android.os.Build.VERSION_CODES.HONEYCOMB;
-import static java.lang.System.nanoTime;
+import static com.squareup.sqlbrite3.QueryObservable.QUERY_OBSERVABLE;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
+import static java.util.Collections.singletonList;
 
 /**
- * A lightweight wrapper around {@link SQLiteOpenHelper} which allows for continuously observing
- * the result of a query. Create using a {@link SqlBrite} instance.
+ * A lightweight wrapper around {@link SupportSQLiteOpenHelper} which allows for continuously
+ * observing the result of a query. Create using a {@link SqlBrite} instance.
  */
 public final class BriteDatabase implements Closeable {
-  private final SQLiteOpenHelper helper;
-  private final SqlBrite.Logger logger;
-  private final Transformer<Query, Query> queryTransformer;
+  private final SupportSQLiteOpenHelper helper;
+  private final Logger logger;
+  private final ObservableTransformer<Query, Query> queryTransformer;
 
   // Package-private to avoid synthetic accessor method for 'transaction' instance.
   final ThreadLocal<SqliteTransaction> transactions = new ThreadLocal<>();
-  /** Publishes sets of tables which have changed. */
-  private final PublishSubject<Set<String>> triggers = PublishSubject.create();
+  private final Subject<Set<String>> triggers = PublishSubject.create();
 
   private final Transaction transaction = new Transaction() {
     @Override public void markSuccessful() {
@@ -102,8 +103,8 @@ public final class BriteDatabase implements Closeable {
       end();
     }
   };
-  private final Action0 ensureNotInTransaction = new Action0() {
-    @Override public void call() {
+  private final Consumer<Object> ensureNotInTransaction = new Consumer<Object>() {
+    @Override public void accept(Object ignored) throws Exception {
       if (transactions.get() != null) {
         throw new IllegalStateException("Cannot subscribe to observable query in a transaction.");
       }
@@ -115,8 +116,8 @@ public final class BriteDatabase implements Closeable {
   // Package-private to avoid synthetic accessor method for 'transaction' instance.
   volatile boolean logging;
 
-  BriteDatabase(SQLiteOpenHelper helper, SqlBrite.Logger logger, Scheduler scheduler,
-      Transformer<Query, Query> queryTransformer) {
+  BriteDatabase(SupportSQLiteOpenHelper helper, Logger logger, Scheduler scheduler,
+      ObservableTransformer<Query, Query> queryTransformer) {
     this.helper = helper;
     this.logger = logger;
     this.scheduler = scheduler;
@@ -132,40 +133,32 @@ public final class BriteDatabase implements Closeable {
 
   /**
    * Create and/or open a database.  This will be the same object returned by
-   * {@link SQLiteOpenHelper#getWritableDatabase} unless some problem, such as a full disk,
+   * {@link SupportSQLiteOpenHelper#getWritableDatabase} unless some problem, such as a full disk,
    * requires the database to be opened read-only.  In that case, a read-only
    * database object will be returned.  If the problem is fixed, a future call
-   * to {@link SQLiteOpenHelper#getWritableDatabase} may succeed, in which case the read-only
+   * to {@link SupportSQLiteOpenHelper#getWritableDatabase} may succeed, in which case the read-only
    * database object will be closed and the read/write object will be returned
    * in the future.
    *
-   * <p class="caution">Like {@link SQLiteOpenHelper#getWritableDatabase}, this method may
+   * <p class="caution">Like {@link SupportSQLiteOpenHelper#getWritableDatabase}, this method may
    * take a long time to return, so you should not call it from the
    * application main thread, including from
    * {@link android.content.ContentProvider#onCreate ContentProvider.onCreate()}.
    *
    * @throws android.database.sqlite.SQLiteException if the database cannot be opened
-   * @return a database object valid until {@link SQLiteOpenHelper#getWritableDatabase}
+   * @return a database object valid until {@link SupportSQLiteOpenHelper#getWritableDatabase}
    *     or {@link #close} is called.
    */
   @NonNull @CheckResult @WorkerThread
-  public SQLiteDatabase getReadableDatabase() {
+  public SupportSQLiteDatabase getReadableDatabase() {
     return helper.getReadableDatabase();
-  }
-
-
-  /** @deprecated Use {@link #getWritableDatabase()}. */
-  @Deprecated
-  @NonNull @CheckResult @WorkerThread
-  public SQLiteDatabase getWriteableDatabase() {
-    return helper.getWritableDatabase();
   }
 
   /**
    * Create and/or open a database that will be used for reading and writing.
    * The first time this is called, the database will be opened and
-   * {@link SQLiteOpenHelper#onCreate}, {@link SQLiteOpenHelper#onUpgrade}
-   * and/or {@link SQLiteOpenHelper#onOpen} will be called.
+   * {@link Callback#onCreate}, {@link Callback#onUpgrade} and/or {@link Callback#onOpen} will be
+   * called.
    *
    * <p>Once opened successfully, the database is cached, so you can
    * call this method every time you need to write to the database.
@@ -181,7 +174,7 @@ public final class BriteDatabase implements Closeable {
    * @return a read/write database object valid until {@link #close} is called
    */
   @NonNull @CheckResult @WorkerThread
-  public SQLiteDatabase getWritableDatabase() {
+  public SupportSQLiteDatabase getWritableDatabase() {
     return helper.getWritableDatabase();
   }
 
@@ -230,7 +223,7 @@ public final class BriteDatabase implements Closeable {
    * }</pre>
    *
    *
-   * @see SQLiteDatabase#beginTransaction()
+   * @see SupportSQLiteDatabase#beginTransaction()
    */
   @CheckResult @NonNull
   public Transaction newTransaction() {
@@ -277,9 +270,8 @@ public final class BriteDatabase implements Closeable {
    * }</pre>
    *
    *
-   * @see SQLiteDatabase#beginTransactionNonExclusive()
+   * @see SupportSQLiteDatabase#beginTransactionNonExclusive()
    */
-  @RequiresApi(HONEYCOMB)
   @CheckResult @NonNull
   public Transaction newNonExclusiveTransaction() {
     SqliteTransaction transaction = new SqliteTransaction(transactions.get());
@@ -291,7 +283,7 @@ public final class BriteDatabase implements Closeable {
   }
 
   /**
-   * Close the underlying {@link SQLiteOpenHelper} and remove cached readable and writeable
+   * Close the underlying {@link SupportSQLiteOpenHelper} and remove cached readable and writeable
    * databases. This does not prevent existing observables from retaining existing references as
    * well as attempting to create new ones for new subscriptions.
    */
@@ -320,88 +312,94 @@ public final class BriteDatabase implements Closeable {
    * <b>Warning:</b> this method does not perform the query! Only by subscribing to the returned
    * {@link Observable} will the operation occur.
    *
-   * @see SQLiteDatabase#rawQuery(String, String[])
+   * @see SupportSQLiteDatabase#query(String, Object[])
    */
   @CheckResult @NonNull
   public QueryObservable createQuery(@NonNull final String table, @NonNull String sql,
-      @NonNull String... args) {
-    Func1<Set<String>, Boolean> tableFilter = new Func1<Set<String>, Boolean>() {
-      @Override public Boolean call(Set<String> triggers) {
-        return triggers.contains(table);
-      }
-
-      @Override public String toString() {
-        return table;
-      }
-    };
-    return createQuery(tableFilter, sql, args);
+      @NonNull Object... args) {
+    return createQuery(new DatabaseQuery(singletonList(table), new SimpleSQLiteQuery(sql, args)));
   }
 
   /**
-   * See {@link #createQuery(String, String, String...)} for usage. This overload allows for
+   * See {@link #createQuery(String, String, Object...)} for usage. This overload allows for
    * monitoring multiple tables for changes.
    *
-   * @see SQLiteDatabase#rawQuery(String, String[])
+   * @see SupportSQLiteDatabase#query(String, Object[])
    */
   @CheckResult @NonNull
   public QueryObservable createQuery(@NonNull final Iterable<String> tables, @NonNull String sql,
-      @NonNull String... args) {
-    Func1<Set<String>, Boolean> tableFilter = new Func1<Set<String>, Boolean>() {
-      @Override public Boolean call(Set<String> triggers) {
-        for (String table : tables) {
-          if (triggers.contains(table)) {
-            return true;
-          }
-        }
-        return false;
-      }
+      @NonNull Object... args) {
+    return createQuery(new DatabaseQuery(tables, new SimpleSQLiteQuery(sql, args)));
+  }
 
-      @Override public String toString() {
-        return tables.toString();
-      }
-    };
-    return createQuery(tableFilter, sql, args);
+  /**
+   * Create an observable which will notify subscribers with a {@linkplain Query query} for
+   * execution. Subscribers are responsible for <b>always</b> closing {@link Cursor} instance
+   * returned from the {@link Query}.
+   * <p>
+   * Subscribers will receive an immediate notification for initial data as well as subsequent
+   * notifications for when the supplied {@code table}'s data changes through the {@code insert},
+   * {@code update}, and {@code delete} methods of this class. Unsubscribe when you no longer want
+   * updates to a query.
+   * <p>
+   * Since database triggers are inherently asynchronous, items emitted from the returned
+   * observable use the {@link Scheduler} supplied to {@link SqlBrite#wrapDatabaseHelper}. For
+   * consistency, the immediate notification sent on subscribe also uses this scheduler. As such,
+   * calling {@link Observable#subscribeOn subscribeOn} on the returned observable has no effect.
+   * <p>
+   * Note: To skip the immediate notification and only receive subsequent notifications when data
+   * has changed call {@code skip(1)} on the returned observable.
+   * <p>
+   * <b>Warning:</b> this method does not perform the query! Only by subscribing to the returned
+   * {@link Observable} will the operation occur.
+   *
+   * @see SupportSQLiteDatabase#query(SupportSQLiteQuery)
+   */
+  @CheckResult @NonNull
+  public QueryObservable createQuery(@NonNull final String table,
+      @NonNull SupportSQLiteQuery query) {
+    return createQuery(new DatabaseQuery(singletonList(table), query));
+  }
+
+  /**
+   * See {@link #createQuery(String, SupportSQLiteQuery)} for usage. This overload allows for
+   * monitoring multiple tables for changes.
+   *
+   * @see SupportSQLiteDatabase#query(SupportSQLiteQuery)
+   */
+  @CheckResult @NonNull
+  public QueryObservable createQuery(@NonNull final Iterable<String> tables,
+      @NonNull SupportSQLiteQuery query) {
+    return createQuery(new DatabaseQuery(tables, query));
   }
 
   @CheckResult @NonNull
-  private QueryObservable createQuery(Func1<Set<String>, Boolean> tableFilter, String sql,
-      String... args) {
+  private QueryObservable createQuery(DatabaseQuery query) {
     if (transactions.get() != null) {
       throw new IllegalStateException("Cannot create observable query in transaction. "
           + "Use query() for a query inside a transaction.");
     }
 
-    DatabaseQuery query = new DatabaseQuery(tableFilter, sql, args);
-    final Observable<Query> queryObservable = triggers //
-        .filter(tableFilter) // Only trigger on tables we care about.
+    return triggers //
+        .filter(query) // DatabaseQuery filters triggers to on tables we care about.
         .map(query) // DatabaseQuery maps to itself to save an allocation.
-        .onBackpressureLatest() // Guard against uncontrollable frequency of upstream emissions.
         .startWith(query) //
         .observeOn(scheduler) //
         .compose(queryTransformer) // Apply the user's query transformer.
-        .onBackpressureLatest() // Guard against uncontrollable frequency of scheduler executions.
-        .doOnSubscribe(ensureNotInTransaction);
-    // TODO switch to .to() when non-@Experimental
-    return new QueryObservable(new Observable.OnSubscribe<Query>() {
-      @Override public void call(Subscriber<? super Query> subscriber) {
-        queryObservable.unsafeSubscribe(subscriber);
-      }
-    });
+        .doOnSubscribe(ensureNotInTransaction)
+        .to(QUERY_OBSERVABLE);
   }
 
   /**
    * Runs the provided SQL and returns a {@link Cursor} over the result set.
    *
-   * @see SQLiteDatabase#rawQuery(String, String[])
+   * @see SupportSQLiteDatabase#query(String, Object[])
    */
   @CheckResult @WorkerThread
-  public Cursor query(@NonNull String sql, @NonNull String... args) {
-    long startNanos = nanoTime();
-    Cursor cursor = getReadableDatabase().rawQuery(sql, args);
-    long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
-
+  public Cursor query(@NonNull String sql, @NonNull Object... args) {
+    Cursor cursor = getReadableDatabase().query(sql, args);
     if (logging) {
-      log("QUERY (%sms)\n  sql: %s\n  args: %s", tookMillis, indentSql(sql), Arrays.toString(args));
+      log("QUERY\n  sql: %s\n  args: %s", indentSql(sql), Arrays.toString(args));
     }
 
     return cursor;
@@ -410,28 +408,18 @@ public final class BriteDatabase implements Closeable {
   /**
    * Insert a row into the specified {@code table} and notify any subscribed queries.
    *
-   * @see SQLiteDatabase#insert(String, String, ContentValues)
+   * @see SupportSQLiteDatabase#insert(String, int, ContentValues)
    */
   @WorkerThread
-  public long insert(@NonNull String table, @NonNull ContentValues values) {
-    return insert(table, values, CONFLICT_NONE);
-  }
-
-  /**
-   * Insert a row into the specified {@code table} and notify any subscribed queries.
-   *
-   * @see SQLiteDatabase#insertWithOnConflict(String, String, ContentValues, int)
-   */
-  @WorkerThread
-  public long insert(@NonNull String table, @NonNull ContentValues values,
-      @ConflictAlgorithm int conflictAlgorithm) {
-    SQLiteDatabase db = getWritableDatabase();
+  public long insert(@NonNull String table, @ConflictAlgorithm int conflictAlgorithm,
+      @NonNull ContentValues values) {
+    SupportSQLiteDatabase db = getWritableDatabase();
 
     if (logging) {
       log("INSERT\n  table: %s\n  values: %s\n  conflictAlgorithm: %s", table, values,
           conflictString(conflictAlgorithm));
     }
-    long rowId = db.insertWithOnConflict(table, null, values, conflictAlgorithm);
+    long rowId = db.insert(table, conflictAlgorithm, values);
 
     if (logging) log("INSERT id: %s", rowId);
 
@@ -446,12 +434,12 @@ public final class BriteDatabase implements Closeable {
    * Delete rows from the specified {@code table} and notify any subscribed queries. This method
    * will not trigger a notification if no rows were deleted.
    *
-   * @see SQLiteDatabase#delete(String, String, String[])
+   * @see SupportSQLiteDatabase#delete(String, String, Object[])
    */
   @WorkerThread
   public int delete(@NonNull String table, @Nullable String whereClause,
       @Nullable String... whereArgs) {
-    SQLiteDatabase db = getWritableDatabase();
+    SupportSQLiteDatabase db = getWritableDatabase();
 
     if (logging) {
       log("DELETE\n  table: %s\n  whereClause: %s\n  whereArgs: %s", table, whereClause,
@@ -472,32 +460,19 @@ public final class BriteDatabase implements Closeable {
    * Update rows in the specified {@code table} and notify any subscribed queries. This method
    * will not trigger a notification if no rows were updated.
    *
-   * @see SQLiteDatabase#update(String, ContentValues, String, String[])
+   * @see SupportSQLiteDatabase#update(String, int, ContentValues, String, Object[])
    */
   @WorkerThread
-  public int update(@NonNull String table, @NonNull ContentValues values,
-      @Nullable String whereClause, @Nullable String... whereArgs) {
-    return update(table, values, CONFLICT_NONE, whereClause, whereArgs);
-  }
-
-  /**
-   * Update rows in the specified {@code table} and notify any subscribed queries. This method
-   * will not trigger a notification if no rows were updated.
-   *
-   * @see SQLiteDatabase#updateWithOnConflict(String, ContentValues, String, String[], int)
-   */
-  @WorkerThread
-  public int update(@NonNull String table, @NonNull ContentValues values,
-      @ConflictAlgorithm int conflictAlgorithm, @Nullable String whereClause,
-      @Nullable String... whereArgs) {
-    SQLiteDatabase db = getWritableDatabase();
+  public int update(@NonNull String table, @ConflictAlgorithm int conflictAlgorithm,
+      @NonNull ContentValues values, @Nullable String whereClause, @Nullable String... whereArgs) {
+    SupportSQLiteDatabase db = getWritableDatabase();
 
     if (logging) {
       log("UPDATE\n  table: %s\n  values: %s\n  whereClause: %s\n  whereArgs: %s\n  conflictAlgorithm: %s",
           table, values, whereClause, Arrays.toString(whereArgs),
           conflictString(conflictAlgorithm));
     }
-    int rows = db.updateWithOnConflict(table, values, whereClause, whereArgs, conflictAlgorithm);
+    int rows = db.update(table, conflictAlgorithm, values, whereClause, whereArgs);
 
     if (logging) log("UPDATE affected %s %s", rows, rows != 1 ? "rows" : "row");
 
@@ -515,11 +490,11 @@ public final class BriteDatabase implements Closeable {
    * <p>
    * No notifications will be sent to queries if {@code sql} affects the data of a table.
    *
-   * @see SQLiteDatabase#execSQL(String)
+   * @see SupportSQLiteDatabase#execSQL(String)
    */
   @WorkerThread
   public void execute(String sql) {
-    if (logging) log("EXECUTE\n  sql: %s", sql);
+    if (logging) log("EXECUTE\n  sql: %s", indentSql(sql));
 
     getWritableDatabase().execSQL(sql);
   }
@@ -531,11 +506,11 @@ public final class BriteDatabase implements Closeable {
    * <p>
    * No notifications will be sent to queries if {@code sql} affects the data of a table.
    *
-   * @see SQLiteDatabase#execSQL(String, Object[])
+   * @see SupportSQLiteDatabase#execSQL(String, Object[])
    */
   @WorkerThread
   public void execute(String sql, Object... args) {
-    if (logging) log("EXECUTE\n  sql: %s\n  args: %s", sql, Arrays.toString(args));
+    if (logging) log("EXECUTE\n  sql: %s\n  args: %s", indentSql(sql), Arrays.toString(args));
 
     getWritableDatabase().execSQL(sql, args);
   }
@@ -547,7 +522,7 @@ public final class BriteDatabase implements Closeable {
    * <p>
    * A notification to queries for {@code table} will be sent after the statement is executed.
    *
-   * @see SQLiteDatabase#execSQL(String)
+   * @see SupportSQLiteDatabase#execSQL(String)
    */
   @WorkerThread
   public void executeAndTrigger(String table, String sql) {
@@ -573,7 +548,7 @@ public final class BriteDatabase implements Closeable {
    * <p>
    * A notification to queries for {@code table} will be sent after the statement is executed.
    *
-   * @see SQLiteDatabase#execSQL(String, Object[])
+   * @see SupportSQLiteDatabase#execSQL(String, Object[])
    */
   @WorkerThread
   public void executeAndTrigger(String table, String sql, Object... args) {
@@ -599,22 +574,21 @@ public final class BriteDatabase implements Closeable {
    * @return the number of rows affected by this SQL statement execution.
    * @throws android.database.SQLException If the SQL string is invalid
    *
-   * @see SQLiteStatement#executeUpdateDelete()
+   * @see SupportSQLiteStatement#executeUpdateDelete()
    */
   @WorkerThread
-  @RequiresApi(Build.VERSION_CODES.HONEYCOMB)
-  public int executeUpdateDelete(String table, SQLiteStatement statement) {
+  public int executeUpdateDelete(String table, SupportSQLiteStatement statement) {
     return executeUpdateDelete(Collections.singleton(table), statement);
   }
 
   /**
-   * See {@link #executeUpdateDelete(String, SQLiteStatement)} for usage. This overload allows for triggering multiple tables.
+   * See {@link #executeUpdateDelete(String, SupportSQLiteStatement)} for usage. This overload
+   * allows for triggering multiple tables.
    *
-   * @see BriteDatabase#executeUpdateDelete(String, SQLiteStatement)
+   * @see BriteDatabase#executeUpdateDelete(String, SupportSQLiteStatement)
    */
   @WorkerThread
-  @RequiresApi(Build.VERSION_CODES.HONEYCOMB)
-  public int executeUpdateDelete(Set<String> tables, SQLiteStatement statement) {
+  public int executeUpdateDelete(Set<String> tables, SupportSQLiteStatement statement) {
     if (logging) log("EXECUTE\n %s", statement);
 
     int rows = statement.executeUpdateDelete();
@@ -633,20 +607,21 @@ public final class BriteDatabase implements Closeable {
    *
    * @throws android.database.SQLException If the SQL string is invalid
    *
-   * @see SQLiteStatement#executeInsert()
+   * @see SupportSQLiteStatement#executeInsert()
    */
   @WorkerThread
-  public long executeInsert(String table, SQLiteStatement statement) {
+  public long executeInsert(String table, SupportSQLiteStatement statement) {
     return executeInsert(Collections.singleton(table), statement);
   }
 
   /**
-   * See {@link #executeInsert(String, SQLiteStatement)} for usage. This overload allows for triggering multiple tables.
+   * See {@link #executeInsert(String, SupportSQLiteStatement)} for usage. This overload allows for
+   * triggering multiple tables.
    *
-   * @see BriteDatabase#executeInsert(String, SQLiteStatement)
+   * @see BriteDatabase#executeInsert(String, SupportSQLiteStatement)
    */
   @WorkerThread
-  public long executeInsert(Set<String> tables, SQLiteStatement statement) {
+  public long executeInsert(Set<String> tables, SupportSQLiteStatement statement) {
     if (logging) log("EXECUTE\n %s", statement);
 
     long rowId = statement.executeInsert();
@@ -663,7 +638,7 @@ public final class BriteDatabase implements Closeable {
      * End a transaction. See {@link #newTransaction()} for notes about how to use this and when
      * transactions are committed and rolled back.
      *
-     * @see SQLiteDatabase#endTransaction()
+     * @see SupportSQLiteDatabase#endTransaction()
      */
     @WorkerThread
     void end();
@@ -674,7 +649,7 @@ public final class BriteDatabase implements Closeable {
      * situation too. If any errors are encountered between this and {@link #end()} the transaction
      * will still be committed.
      *
-     * @see SQLiteDatabase#setTransactionSuccessful()
+     * @see SupportSQLiteDatabase#setTransactionSuccessful()
      */
     @WorkerThread
     void markSuccessful();
@@ -688,7 +663,7 @@ public final class BriteDatabase implements Closeable {
      *
      * @return true if the transaction was yielded
      *
-     * @see SQLiteDatabase#yieldIfContendedSafely()
+     * @see SupportSQLiteDatabase#yieldIfContendedSafely()
      */
     @WorkerThread
     boolean yieldIfContendedSafely();
@@ -705,7 +680,7 @@ public final class BriteDatabase implements Closeable {
      *   more progress than they would if we started the transaction immediately.
      * @return true if the transaction was yielded
      *
-     * @see SQLiteDatabase#yieldIfContendedSafely(long)
+     * @see SupportSQLiteDatabase#yieldIfContendedSafely(long)
      */
     @WorkerThread
     boolean yieldIfContendedSafely(long sleepAmount, TimeUnit sleepUnit);
@@ -726,7 +701,7 @@ public final class BriteDatabase implements Closeable {
       CONFLICT_ROLLBACK
   })
   @Retention(SOURCE)
-  public @interface ConflictAlgorithm {
+  private @interface ConflictAlgorithm {
   }
 
   static String indentSql(String sql) {
@@ -782,15 +757,14 @@ public final class BriteDatabase implements Closeable {
     }
   }
 
-  final class DatabaseQuery extends Query implements Func1<Set<String>, Query> {
-    private final Func1<Set<String>, Boolean> tableFilter;
-    private final String sql;
-    private final String[] args;
+  final class DatabaseQuery extends Query
+      implements Function<Set<String>, Query>, Predicate<Set<String>> {
+    private final Iterable<String> tables;
+    private final SupportSQLiteQuery query;
 
-    DatabaseQuery(Func1<Set<String>, Boolean> tableFilter, String sql, String... args) {
-      this.tableFilter = tableFilter;
-      this.sql = sql;
-      this.args = args;
+    DatabaseQuery(Iterable<String> tables, SupportSQLiteQuery query) {
+      this.tables = tables;
+      this.query = query;
     }
 
     @Override public Cursor run() {
@@ -798,24 +772,30 @@ public final class BriteDatabase implements Closeable {
         throw new IllegalStateException("Cannot execute observable query in a transaction.");
       }
 
-      long startNanos = nanoTime();
-      Cursor cursor = getReadableDatabase().rawQuery(sql, args);
+      Cursor cursor = getReadableDatabase().query(query);
 
       if (logging) {
-        long tookMillis = NANOSECONDS.toMillis(nanoTime() - startNanos);
-        log("QUERY (%sms)\n  tables: %s\n  sql: %s\n  args: %s", tookMillis, tableFilter,
-            indentSql(sql), Arrays.toString(args));
+        log("QUERY\n  tables: %s\n  sql: %s", tables, indentSql(query.getSql()));
       }
 
       return cursor;
     }
 
     @Override public String toString() {
-      return sql;
+      return query.getSql();
     }
 
-    @Override public Query call(Set<String> ignored) {
+    @Override public Query apply(Set<String> ignored) {
       return this;
+    }
+
+    @Override public boolean test(Set<String> strings) {
+      for (String table : tables) {
+        if (strings.contains(table)) {
+          return true;
+        }
+      }
+      return false;
     }
   }
 }

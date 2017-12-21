@@ -1,31 +1,23 @@
-buildscript {
-  dependencies {
-    classpath rootProject.ext.androidPlugin
-  }
-}
-
 apply plugin: 'com.android.library'
-apply from: rootProject.file('gradle/android-findbugs.gradle')
 
 dependencies {
-  compile rootProject.ext.rxJava
-  compile rootProject.ext.supportAnnotations
+  api rootProject.ext.rxJava
+  api rootProject.ext.supportSqlite
+  implementation rootProject.ext.supportAnnotations
 
-  androidTestCompile rootProject.ext.supportTestRunner
-  androidTestCompile(rootProject.ext.truth) {
-    exclude group: 'junit' // Android has JUnit built in.
-  }
-}
+  androidTestImplementation rootProject.ext.supportTestRunner
+  androidTestImplementation rootProject.ext.truth
+  androidTestImplementation rootProject.ext.supportSqliteFramework
 
-def isCi() {
-  return "true".equals(System.getenv('CI'))
+  lintChecks project(':sqlbrite-lint')
 }
 
 android {
-  compileSdkVersion rootProject.ext.compileSdkVersion
-  buildToolsVersion rootProject.ext.buildToolsVersion
+  compileSdkVersion versions.compileSdk
 
   defaultConfig {
+    minSdkVersion versions.minSdk
+
     testInstrumentationRunner 'android.support.test.runner.AndroidJUnitRunner'
   }
 
@@ -34,36 +26,9 @@ android {
     targetCompatibility JavaVersion.VERSION_1_7
   }
 
-  dexOptions {
-    preDexLibraries = !isCi()
-  }
-
   lintOptions {
     textOutput 'stdout'
     textReport true
-  }
-
-  buildTypes {
-    debug {
-      testCoverageEnabled true
-    }
-  }
-
-  packagingOptions {
-    exclude 'LICENSE.txt'
-  }
-}
-
-
-if (isCi()) {
-  println 'Running on CI. Adding task to start emulator.'
-
-  task startEmulator << {
-    "$rootDir/gradle/start-emulator.sh".execute().waitFor()
-  }
-
-  android.testVariants.all { variant ->
-    variant.connectedInstrumentTest.dependsOn startEmulator
   }
 }
 

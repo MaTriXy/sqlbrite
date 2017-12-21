@@ -1,6 +1,52 @@
 Change Log
 ==========
 
+Version 3.1.0 *(2017-12-18)*
+----------------------------
+
+ * New: `inTransaction` Kotlin extension function which handles starting, marking successful, and ending
+   a transaction.
+ * New: Embedded lint check which validates the number of arguments passed to `query` and `createQuery`
+   match the number of expected arguments of the SQL statement.
+ * Fix: Properly indent multi-line SQL statements in the logs for `query`.
+
+
+Version 3.0.0 *(2017-11-28)*
+----------------------------
+
+Group ID has changed to `com.squareup.sqlbrite3`.
+
+ * New: Build on top of the Android architecture components Sqlite support library. This allows swapping
+   out the underlying Sqlite implementation to that of your choosing.
+
+Because of the way the Sqlite support library works, there is no interop bridge between 1.x or 2.x to
+this new version. If you haven't fully migrated to 2.x, complete that migration first and then upgrade
+to 3.x all at once.
+
+
+Version 2.0.0 *(2017-07-07)*
+----------------------------
+
+Group ID has changed to `com.squareup.sqlbrite2`.
+
+ * New: RxJava 2.x support. Backpressure is no longer supported as evidenced by the use of
+   `Observable`. If you want to slow down query notifications based on backpressure or another metric
+   like time then you should apply those operators yourself.
+ * New: `mapToOptional` for queries that return 0 or 1 rows.
+ * New: `sqlbrite-kotlin` module provides `mapTo*` extension functions for `Observable<Query>`.
+ * New: `sqlbrite-interop` module allows bridging 1.x and 2.x libraries together so that notifications
+   from each trigger queries from the other.
+
+Note: This version only supports RxJava 2.
+
+
+Version 1.1.2 *(2017-06-30)*
+----------------------------
+
+ * Internal architecture changes to support the upcoming 2.0 release and a bridge allowing both 1.x
+   and 2.x to be used at the same time.
+
+
 Version 1.1.1 *(2016-12-20)*
 ----------------------------
 

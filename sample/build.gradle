@@ -1,47 +1,29 @@
-buildscript {
-  dependencies {
-    classpath rootProject.ext.androidPlugin
-  }
-}
-
 apply plugin: 'com.android.application'
-apply from: rootProject.file('gradle/android-findbugs.gradle')
 
 dependencies {
-  // Android dependencies.
-  compile rootProject.ext.supportV4
-  compile rootProject.ext.supportAnnotations
+  implementation rootProject.ext.supportV4
+  implementation rootProject.ext.supportAnnotations
 
-  // Dagger dependencies.
-  compile rootProject.ext.dagger
+  implementation rootProject.ext.dagger
   annotationProcessor rootProject.ext.daggerCompiler
 
-  // Third-party dependencies.
-  compile rootProject.ext.butterKnifeRuntime
+  implementation rootProject.ext.butterKnifeRuntime
   annotationProcessor rootProject.ext.butterKnifeCompiler
-  compile rootProject.ext.timber
-  compile rootProject.ext.rxJava
-  compile rootProject.ext.rxAndroid
-  compile rootProject.ext.rxBinding
+  implementation rootProject.ext.timber
+  implementation rootProject.ext.rxJava
+  implementation rootProject.ext.rxAndroid
+  implementation rootProject.ext.rxBinding
 
-  provided rootProject.ext.autoValue
+  compileOnly rootProject.ext.autoValue
   annotationProcessor rootProject.ext.autoValue
   annotationProcessor rootProject.ext.autoValueParcel
 
-  provided rootProject.ext.findbugsJsr305
-  provided rootProject.ext.findbugsAnnotations
-
-  // In-repo dependencies.
-  compile project(':sqlbrite')
-}
-
-def isCi() {
-  return "true".equals(System.getenv('CI'))
+  implementation project(':sqlbrite')
+  implementation rootProject.ext.supportSqliteFramework
 }
 
 android {
-  compileSdkVersion rootProject.ext.compileSdkVersion
-  buildToolsVersion rootProject.ext.buildToolsVersion
+  compileSdkVersion versions.compileSdk
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_1_7
@@ -54,13 +36,9 @@ android {
     ignore 'InvalidPackage' // Provided AutoValue pulls in Guava and friends. Doesn't end up in APK.
   }
 
-  dexOptions {
-    preDexLibraries = !isCi()
-  }
-
   defaultConfig {
-    minSdkVersion 14
-    targetSdkVersion 23
+    minSdkVersion versions.minSdk
+    targetSdkVersion versions.compileSdk
     applicationId 'com.example.sqlbrite.todo'
 
     versionCode 1

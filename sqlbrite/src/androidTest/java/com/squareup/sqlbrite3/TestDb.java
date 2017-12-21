@@ -13,25 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.squareup.sqlbrite;
+package com.squareup.sqlbrite3;
 
+import android.arch.persistence.db.SupportSQLiteDatabase;
+import android.arch.persistence.db.SupportSQLiteOpenHelper;
 import android.content.ContentValues;
-import android.content.Context;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.support.annotation.NonNull;
+import io.reactivex.functions.Function;
 import java.util.Arrays;
 import java.util.Collection;
-import rx.functions.Func1;
 
-import static com.squareup.sqlbrite.TestDb.EmployeeTable.ID;
-import static com.squareup.sqlbrite.TestDb.EmployeeTable.NAME;
-import static com.squareup.sqlbrite.TestDb.EmployeeTable.USERNAME;
-import static com.squareup.sqlbrite.TestDb.ManagerTable.EMPLOYEE_ID;
-import static com.squareup.sqlbrite.TestDb.ManagerTable.MANAGER_ID;
+import static android.database.sqlite.SQLiteDatabase.CONFLICT_FAIL;
+import static com.squareup.sqlbrite3.TestDb.EmployeeTable.ID;
+import static com.squareup.sqlbrite3.TestDb.EmployeeTable.NAME;
+import static com.squareup.sqlbrite3.TestDb.EmployeeTable.USERNAME;
+import static com.squareup.sqlbrite3.TestDb.ManagerTable.EMPLOYEE_ID;
+import static com.squareup.sqlbrite3.TestDb.ManagerTable.MANAGER_ID;
 
-final class TestDb extends SQLiteOpenHelper {
+final class TestDb extends SupportSQLiteOpenHelper.Callback {
   static final String TABLE_EMPLOYEE = "employee";
   static final String TABLE_MANAGER = "manager";
 
@@ -54,8 +54,8 @@ final class TestDb extends SQLiteOpenHelper {
   }
 
   static final class Employee {
-    static final Func1<Cursor, Employee> MAPPER = new Func1<Cursor, Employee>() {
-      @Override public Employee call(Cursor cursor) {
+    static final Function<Cursor, Employee> MAPPER = new Function<Cursor, Employee>() {
+      @Override public Employee apply(Cursor cursor) {
         return new Employee( //
             cursor.getString(cursor.getColumnIndexOrThrow(EmployeeTable.USERNAME)),
             cursor.getString(cursor.getColumnIndexOrThrow(EmployeeTable.NAME)));
@@ -105,20 +105,20 @@ final class TestDb extends SQLiteOpenHelper {
   long bobId;
   long eveId;
 
-  TestDb(Context context, String path) {
-    super(context, path, null /* cursor factory */, 1 /* version */);
+  TestDb() {
+    super(1);
   }
 
-  @Override public void onCreate(@NonNull SQLiteDatabase db) {
+  @Override public void onCreate(@NonNull SupportSQLiteDatabase db) {
     db.execSQL("PRAGMA foreign_keys=ON");
 
     db.execSQL(CREATE_EMPLOYEE);
-    aliceId = db.insert(TABLE_EMPLOYEE, null, employee("alice", "Alice Allison"));
-    bobId = db.insert(TABLE_EMPLOYEE, null, employee("bob", "Bob Bobberson"));
-    eveId = db.insert(TABLE_EMPLOYEE, null, employee("eve", "Eve Evenson"));
+    aliceId = db.insert(TABLE_EMPLOYEE, CONFLICT_FAIL, employee("alice", "Alice Allison"));
+    bobId = db.insert(TABLE_EMPLOYEE, CONFLICT_FAIL, employee("bob", "Bob Bobberson"));
+    eveId = db.insert(TABLE_EMPLOYEE, CONFLICT_FAIL, employee("eve", "Eve Evenson"));
 
     db.execSQL(CREATE_MANAGER);
-    db.insert(TABLE_MANAGER, null, manager(eveId, aliceId));
+    db.insert(TABLE_MANAGER, CONFLICT_FAIL, manager(eveId, aliceId));
   }
 
   static ContentValues employee(String username, String name) {
@@ -135,7 +135,8 @@ final class TestDb extends SQLiteOpenHelper {
     return values;
   }
 
-  @Override public void onUpgrade(@NonNull SQLiteDatabase db, int oldVersion, int newVersion) {
+  @Override
+  public void onUpgrade(@NonNull SupportSQLiteDatabase db, int oldVersion, int newVersion) {
     throw new AssertionError();
   }
 }
