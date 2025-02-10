@@ -4,6 +4,16 @@ SQL Brite
 A lightweight wrapper around `SupportSQLiteOpenHelper` and `ContentResolver` which introduces reactive
 stream semantics to queries.
 
+# Deprecated
+
+This library is no longer actively developed and is considered complete.
+
+Its database features (and far, far more) are now offered by [SQLDelight](https://github.com/cashapp/sqldelight/)
+and its [upgrading guide](https://github.com/cashapp/sqldelight/blob/1.0.0/UPGRADING.md) offers some
+migration help.
+
+For content provider monitoring please use [Copper](https://github.com/cashapp/copper) instead.
+
 
 
 Usage
@@ -31,8 +41,8 @@ additional parameter of table(s) on which to listen for changes. Subscribe to th
 
 ```java
 Observable<Query> users = db.createQuery("users", "SELECT * FROM users");
-users.subscribe(new Action1<Query>() {
-  @Override public void call(Query query) {
+users.subscribe(new Consumer<Query>() {
+  @Override public void accept(Query query) {
     Cursor cursor = query.run();
     // TODO parse data...
   }
@@ -45,8 +55,8 @@ insert, update, or delete data, any subscribed queries will update with the new 
 
 ```java
 final AtomicInteger queries = new AtomicInteger();
-users.subscribe(new Action1<Query>() {
-  @Override public void call(Query query) {
+users.subscribe(new Consumer<Query>() {
+  @Override public void accept(Query query) {
     queries.getAndIncrement();
   }
 });
@@ -66,8 +76,8 @@ Unsubscribe from the returned `Subscription` to stop getting updates.
 
 ```java
 final AtomicInteger queries = new AtomicInteger();
-Subscription s = users.subscribe(new Action1<Query>() {
-  @Override public void call(Query query) {
+Subscription s = users.subscribe(new Consumer<Query>() {
+  @Override public void accept(Query query) {
     queries.getAndIncrement();
   }
 });
@@ -86,8 +96,8 @@ Use transactions to prevent large changes to the data from spamming your subscri
 
 ```java
 final AtomicInteger queries = new AtomicInteger();
-users.subscribe(new Action1<Query>() {
-  @Override public void call(Query query) {
+users.subscribe(new Consumer<Query>() {
+  @Override public void accept(Query query) {
     queries.getAndIncrement();
   }
 });
@@ -111,8 +121,8 @@ Since queries are just regular RxJava `Observable` objects, operators can also b
 control the frequency of notifications to subscribers.
 
 ```java
-users.debounce(500, MILLISECONDS).subscribe(new Action1<Query>() {
-  @Override public void call(Query query) {
+users.debounce(500, MILLISECONDS).subscribe(new Consumer<Query>() {
+  @Override public void accept(Query query) {
     // TODO...
   }
 });
@@ -148,12 +158,12 @@ Download
 --------
 
 ```groovy
-implementation 'com.squareup.sqlbrite3:sqlbrite:3.1.1'
+implementation 'com.squareup.sqlbrite3:sqlbrite:3.2.0'
 ```
 
 For the 'kotlin' module that adds extension functions to `Observable<Query>`:
 ```groovy
-implementation 'com.squareup.sqlbrite3:sqlbrite-kotlin:3.1.1'
+implementation 'com.squareup.sqlbrite3:sqlbrite-kotlin:3.2.0'
 ```
 
 
